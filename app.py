@@ -5,7 +5,6 @@ import torch
 from transformers import AutoProcessor, AutoModelForVision2Seq
 import requests
 from io import BytesIO
-import base64
 import os
 from dotenv import load_dotenv
 
