@@ -1,76 +1,222 @@
-# استيراد الوحدات اللازمة من Flask
-from flask import Flask, request, jsonify
-# استيراد CORS للسماح بطلبات من الواجهة الأمامية (Frontend)
+from flask import Flask, request, jsonify, render_template_string
 from flask_cors import CORS
+from PIL import Image
+import torch
+from transformers import AutoProcessor, AutoModelForVision2Seq
+import requests
+from io import BytesIO
+import os
+from dotenv import load_dotenv
 
-# تهيئة تطبيق Flask
+# تحميل المتغيرات البيئية
+load_dotenv()
+
 app = Flask(__name__)
-# تفعيل CORS لجميع المسارات للسماح للواجهة الأمامية بالوصول
 CORS(app)
 
-# مسار أساسي لاختبار أن الخادم يعمل
+# تهيئة نموذج وصف الصور
+def load_image_captioning_model():
+    """تحميل نموذج وصف الصور"""
+    try:
+        # استخدام نموذج متعدد اللغات لوصف الصور
+        model_name = "microsoft/git-base-coco"
+        processor = AutoProcessor.from_pretrained(model_name)
+        model = AutoModelForVision2Seq.from_pretrained(model_name)
+        return processor, model
+    except Exception as e:
+        print(f"خطأ في تحميل النموذج: {e}")
+        return None, None
+
+# تحميل النموذج عند بدء التطبيق
+processor, model = load_image_captioning_model()
+
+def describe_image_english(image):
+    """وصف الصورة باللغة الإنجليزية"""
+    try:
+        if processor is None or model is None:
+            return "Model not loaded"
+        
+        # معالجة الصورة
+        inputs = processor(images=image, return_tensors="pt")
+        
+        # توليد الوصف
+        with torch.no_grad():
+            generated_ids = model.generate(
+                pixel_values=inputs.pixel_values,
+                max_length=50,
+                num_beams=4,
+                early_stopping=True
+            )
+        
+        # تحويل المعرفات إلى نص
+        description = processor.batch_decode(generated_ids, skip_special_tokens=True)[0]
+        return description.strip()
+    except Exception as e:
+        return f"Error generating English description: {str(e)}"
+
+def describe_image_arabic(image):
+    """وصف الصورة باللغة العربية"""
+    try:
+        if processor is None or model is None:
+            return "النموذج غير محمل"
+        
+        # معالجة الصورة
+        inputs = processor(images=image, return_tensors="pt")
+        
+        # توليد الوصف باللغة العربية
+        with torch.no_grad():
+            generated_ids = model.generate(
+                pixel_values=inputs.pixel_values,
+                max_length=50,
+                num_beams=4,
+                early_stopping=True,
+                do_sample=True,
+                temperature=0.7
+            )
+        
+        # تحويل المعرفات إلى نص
+        description = processor.batch_decode(generated_ids, skip_special_tokens=True)[0]
+        
+        # ترجمة بسيطة للكلمات الأساسية (يمكن تحسينها)
+        arabic_translations = {
+            "a person": "شخص",
+            "a man": "رجل",
+            "a woman": "امرأة",
+            "a child": "طفل",
+            "a dog": "كلب",
+            "a cat": "قط",
+            "a car": "سيارة",
+            "a building": "مبنى",
+            "a tree": "شجرة",
+            "a flower": "زهرة",
+            "a table": "طاولة",
+            "a chair": "كرسي",
+            "a book": "كتاب",
+            "a phone": "هاتف",
+            "a computer": "حاسوب",
+            "a camera": "كاميرا",
+            "a street": "شارع",
+            "a road": "طريق",
+            "a mountain": "جبل",
+            "a sea": "بحر",
+            "a river": "نهر",
+            "a sky": "سماء",
+            "a sun": "شمس",
+            "a moon": "قمر",
+            "a star": "نجمة",
+            "a cloud": "سحابة",
+            "a rain": "مطر",
+            "a snow": "ثلج",
+            "a fire": "نار",
+            "a water": "ماء",
+            "a food": "طعام",
+            "a drink": "شراب",
+            "a shirt": "قميص",
+            "a pants": "بنطلون",
+            "a hat": "قبعة",
+            "a shoe": "حذاء",
+            "a bag": "حقيبة",
+            "a clock": "ساعة",
+            "a door": "باب",
+            "a window": "نافذة",
+            "a wall": "جدار",
+            "a floor": "أرضية",
+            "a ceiling": "سقف",
+            "a light": "ضوء",
+            "a shadow": "ظل",
+            "a color": "لون",
+            "a red": "أحمر",
+            "a blue": "أزرق",
+            "a green": "أخضر",
+            "a yellow": "أصفر",
+            "a black": "أسود",
+            "a white": "أبيض",
+            "a big": "كبير",
+            "a small": "صغير",
+            "a tall": "طويل",
+            "a short": "قصير",
+            "a beautiful": "جميل",
+            "a nice": "جميل",
+            "a good": "جيد",
+            "a bad": "سيء",
+            "a happy": "سعيد",
+            "a sad": "حزين",
+            "a young": "شاب",
+            "a old": "عجوز",
+            "a new": "جديد",
+            "a old": "قديم"
+        }
+        
+        # تطبيق الترجمات
+        arabic_description = description
+        for english, arabic in arabic_translations.items():
+            arabic_description = arabic_description.replace(english, arabic)
+        
+        return arabic_description.strip()
+    except Exception as e:
+        return f"خطأ في توليد الوصف العربي: {str(e)}"
+
 @app.route('/')
 def home():
-    """
-    مسار الصفحة الرئيسية لاختبار اتصال الخادم.
-    """
-    return "مرحباً بك في الواجهة الخلفية لـ Morox!"
+    """الصفحة الرئيسية"""
+    return render_template_string(HTML_TEMPLATE)
 
-# مسار لمعالجة إرسال نموذج الاتصال
-@app.route('/contact', methods=['POST'])
-def contact():
-    """
-    يعالج طلبات POST من نموذج الاتصال.
-    يستقبل البيانات (الاسم، البريد الإلكتروني، الرسالة) ويقوم بمعالجتها.
-    """
-    # التحقق مما إذا كان الطلب بصيغة JSON
-    if not request.is_json:
-        # إذا لم يكن الطلب بصيغة JSON، يتم إرجاع خطأ
-        return jsonify({"message": "Content-Type must be application/json"}), 400
+@app.route('/api/describe', methods=['POST'])
+def describe_image():
+    """API لوصف الصورة"""
+    try:
+        if 'image' not in request.files:
+            return jsonify({'error': 'لم يتم إرسال صورة'}), 400
+        
+        file = request.files['image']
+        if file.filename == '':
+            return jsonify({'error': 'لم يتم اختيار ملف'}), 400
+        
+        # قراءة الصورة
+        image = Image.open(file.stream).convert('RGB')
+        
+        # وصف الصورة باللغتين
+        english_desc = describe_image_english(image)
+        arabic_desc = describe_image_arabic(image)
+        
+        return jsonify({
+            'english': english_desc,
+            'arabic': arabic_desc,
+            'success': True
+        })
+    
+    except Exception as e:
+        return jsonify({'error': f'خطأ في معالجة الصورة: {str(e)}'}), 500
 
-    # الحصول على بيانات JSON المرسلة من الواجهة الأمامية
-    data = request.get_json()
+@app.route('/api/describe_url', methods=['POST'])
+def describe_image_url():
+    """API لوصف الصورة من رابط URL"""
+    try:
+        data = request.get_json()
+        if not data or 'url' not in data:
+            return jsonify({'error': 'لم يتم إرسال رابط URL'}), 400
+        
+        url = data['url']
+        
+        # تحميل الصورة من الرابط
+        response = requests.get(url)
+        response.raise_for_status()
+        
+        # قراءة الصورة
+        image = Image.open(BytesIO(response.content)).convert('RGB')
+        
+        # وصف الصورة باللغتين
+        english_desc = describe_image_english(image)
+        arabic_desc = describe_image_arabic(image)
+        
+        return jsonify({
+            'english': english_desc,
+            'arabic': arabic_desc,
+            'success': True
+        })
+    
+    except Exception as e:
+        return jsonify({'error': f'خطأ في معالجة الصورة: {str(e)}'}), 500
 
-    # استخراج البيانات من الحمولة (payload)
-    name = data.get('name')
-    email = data.get('email')
-    message = data.get('message')
-
-    # التحقق من أن جميع الحقول المطلوبة موجودة
-    if not name or not email or not message:
-        # إذا كانت هناك حقول مفقودة، يتم إرجاع خطأ
-        return jsonify({"message": "الرجاء تعبئة جميع الحقول المطلوبة."}), 400
-
-    # في هذا المثال، سنقوم فقط بطباعة البيانات إلى وحدة التحكم.
-    # في تطبيق حقيقي، يمكنك هنا حفظ البيانات في قاعدة بيانات (مثل Firestore أو MongoDB)،
-    # أو إرسال بريد إلكتروني، أو تنفيذ أي منطق عمل آخر.
-    print(f"تم استلام رسالة جديدة من نموذج الاتصال:")
-    print(f"الاسم: {name}")
-    print(f"البريد الإلكتروني: {email}")
-    print(f"الرسالة: {message}")
-
-    # إرجاع استجابة نجاح إلى الواجهة الأمامية
-    return jsonify({"message": "تم استلام رسالتك بنجاح!"}), 200
-
-# نقطة نهاية API مثال لجلب بيانات الدورات (للاستخدام المستقبلي)
-@app.route('/api/courses', methods=['GET'])
-def get_courses():
-    """
-    يعيد قائمة بالدورات المتاحة.
-    يمكن استخدام هذا لجلب بيانات الدورات ديناميكيًا للواجهة الأمامية.
-    """
-    courses_data = [
-        {"id": 1, "title": "مقدمة في الذكاء الاصطناعي", "description": "تعلم أساسيات الذكاء الاصطناعي، تاريخه، تطبيقاته، ومستقبله المثير."},
-        {"id": 2, "title": "التعلم الآلي للمبتدئين", "description": "اكتشف عالم التعلم الآلي، من الخوارزميات الأساسية إلى النماذج المتقدمة."},
-        {"id": 3, "title": "التعلم العميق والشبكات العصبية", "description": "تعمق في التعلم العميق، العمود الفقري للذكاء الاصطناعي الحديث."},
-        {"id": 4, "title": "معالجة اللغة الطبيعية (NLP)", "description": "استكشف كيف تفهم الآلات اللغة البشرية وتتفاعل معها."},
-        {"id": 5, "title": "الرؤية الحاسوبية", "description": "تعلم كيف ترى الآلات العالم وتفسر الصور ومقاطع الفيديو."},
-        {"id": 6, "title": "الأخلاقيات في الذكاء الاصطناعي", "description": "ناقش التحديات الأخلاقية المرتبطة بتطوير واستخدام الذكاء الاصطناعي."}
-    ]
-    return jsonify(courses_data), 200
-
-# تشغيل الخادم
 if __name__ == '__main__':
-    # تشغيل التطبيق في وضع التصحيح (Debug mode)
-    # ملاحظة: قم بتعطيل وضع التصحيح في بيئات الإنتاج
-    app.run(debug=True)
+    app.run(debug=True, host='0.0.0.0', port=5000)
